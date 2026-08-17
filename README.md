@@ -161,7 +161,7 @@ dsh_python/
 ## 文档
 
 - 架构总览与模块手册：[`manuals/README.md`](manuals/README.md)（21 章，函数级）；
-- 与 TS 版差异对照与补齐记录：[`manuals/13`](manuals/13-与TS版差异对照与补齐记录.md)；
+- 与 TS 版差异对照与补齐记录：[`manuals/13`](manuals/13-%E4%B8%8ETS%E7%89%88%E5%B7%AE%E5%BC%82%E5%AF%B9%E7%85%A7%E4%B8%8E%E8%A1%A5%E9%BD%90%E8%AE%B0%E5%BD%95.md)；
 - wanter 专题：[`WANTER.md`](WANTER.md)。
 
 ## 测试
