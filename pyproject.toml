@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dsh-python"
+version = "0.1.0"
+description = "DeepSeek Harness (dsh) 的 Python 重实现：一切皆插件的智能体框架（FastAPI Web UI + 插件内核 + 事件溯源会话）"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "httpx>=0.27",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+dsh-python = "dsh.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["dsh*"]
+
+[tool.setuptools.package-data]
+"dsh.config.bundles" = ["*.yml"]
+"dsh.server.static" = ["*.html", "*.css", "*.js"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

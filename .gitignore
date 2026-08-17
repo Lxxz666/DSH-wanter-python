@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 运行产物
+.dsh/
+storage.json
+examples/*.svg
+!examples/wanter_panel_preview.svg
+!examples/wanter_double_well.svg
+!examples/wanter_showcase.svg
+!examples/wanter_embedding_chart.svg
+
+# IDE
+.idea/
+.vscode/
+
+# 系统
+Thumbs.db
+.DS_Store
