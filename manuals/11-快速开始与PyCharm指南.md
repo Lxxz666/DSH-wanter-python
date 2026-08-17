@@ -24,7 +24,7 @@ pip install -r requirements.txt
 
 ```sh
 python -m pytest tests -q
-# 期望输出: 216 passed, 1 skipped（Linux-only Landlock 用例）
+# 期望输出: 224 passed, 1 skipped（Linux-only Landlock 用例）
 ```
 
 ## 3. 三种运行方式

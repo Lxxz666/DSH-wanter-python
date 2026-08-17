@@ -3,7 +3,7 @@
 **DeepSeek Harness 的 Python 重实现** —— 一切皆插件的智能体框架。
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)]()
-[![Tests](https://img.shields.io/badge/tests-216%20passed%20%C2%B7%201%20skipped-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-224%20passed%20%C2%B7%201%20skipped-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 [![Manuals](https://img.shields.io/badge/manuals-21%20%E7%AB%A0-orange)]()
 [![Lines](https://img.shields.io/badge/dsh%20%E5%8C%85-13k%2B%20%E8%A1%8C-blueviolet)]()
@@ -76,7 +76,7 @@ python run.py plugin init myprofile            # 初始化自定义 profile
 **验证**：
 
 ```sh
-python -m pytest tests -q      # 期望 216 passed, 1 skipped（Linux-only）
+python -m pytest tests -q      # 期望 224 passed, 1 skipped（Linux-only）
 ```
 
 ## wanter 一分钟
@@ -133,7 +133,7 @@ dsh_python/
 │   ├── wanter/           # wanter 动力学（引擎/插件/校准/可视化）
 │   ├── config/ boot.py cli/   # 组合与启动
 │   └── server/           # FastAPI Web 服务（REST/SSE/地形面板/会话树）
-├── tests/                # pytest 套件（217 用例 + fixtures；Windows 上 216 passed + 1 skipped）
+├── tests/                # pytest 套件（225 用例 + fixtures；Windows 上 224 passed + 1 skipped）
 ├── examples/             # 示例插件 + wanter 实验/图表（SVG 产出）
 └── manuals/              # 21 章中文开发手册（函数级技术细节）
 ```
@@ -164,10 +164,29 @@ dsh_python/
 - 与 TS 版差异对照与补齐记录：[`manuals/13`](manuals/13-%E4%B8%8ETS%E7%89%88%E5%B7%AE%E5%BC%82%E5%AF%B9%E7%85%A7%E4%B8%8E%E8%A1%A5%E9%BD%90%E8%AE%B0%E5%BD%95.md)；
 - wanter 专题：[`WANTER.md`](WANTER.md)。
 
+## 🔍 最新审计与架构问题修复（2026-08 全面审计批次）
+
+双路审计（代码 bug 猎杀 11 个高危模块 + 手册逐模块对照 135 文件 / 744 公开符号），
+**10 项真实 bug 全部修复**并配回归测试，详见
+[`manuals/13` §15](manuals/13-%E4%B8%8ETS%E7%89%88%E5%B7%AE%E5%BC%82%E5%AF%B9%E7%85%A7%E4%B8%8E%E8%A1%A5%E9%BD%90%E8%AE%B0%E5%BD%95.md#15-第十二批全面审计代码-bug-猎杀--手册对照实施记录)：
+
+| 级别 | 问题 | 修复 |
+|---|---|---|
+| 🔴 严重 | **surface replace 顺序**：压缩摘要被追加到末尾，派生历史顺序错乱 | 新节点插入被替换区间原位置 |
+| 🔴 严重 | **Linux Landlock 后端整体失效**：读/执行进了 handled 却无放行规则 | 补根路径只读放行规则 |
+| 🟡 中等 | **schema 假校验**：properties 缺 `type:"object"` 时任何值静默通过 | fail loud 强制声明 |
+| 🟡 中等 | **`temperature=0` 被默认值覆盖**（确定性采样失效） | `is not None` 判断 |
+| 🟡 中等 | **fork 边界漏检**「前缀结束于 turn 中段」 | turn 深度平衡扫描 |
+| 🟢 轻微 | flush 契约恒 True · ApprovalService 空配置崩溃 · `_cancel_cause` 跨 turn 泄漏 · MCP 写失败 pending 泄漏 · **wanter 子任务完成用错坐标**（移除错误目标） | 全部修复 |
+
+✅ 审计结论：kernel / 工具三段调度 / Code Mode 调度器 / cordis 审批竞态 / wanter
+数值稳定性 / 投影·工作区·会话引用 —— **无问题**；40 个能力缝全挂载、131 模块
+导入零失败、手册与代码三方对齐。回归：`tests/test_audit_fixes.py`（8 项）。
+
 ## 测试
 
 ```sh
-python -m pytest tests -q   # 216 passed, 1 skipped（Linux-only Landlock 用例）
+python -m pytest tests -q   # 224 passed, 1 skipped（Linux-only Landlock 用例）
 ```
 
 ## 许可证
