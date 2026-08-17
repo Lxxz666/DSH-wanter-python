@@ -595,8 +595,14 @@ class DynamicCordisRunnerService(Service):
                             for plugin in self._registry.all()
                             if plugin["run"] is not None]
         if pending_retracts:
-            self._retract_task = asyncio.ensure_future(
-                self._drain_retracts(pending_retracts))
+            try:
+                self._retract_task = asyncio.ensure_future(
+                    self._drain_retracts(pending_retracts))
+            except RuntimeError:
+                # 无运行事件循环（如解释器收尾路径）：如实记录，不崩溃
+                log.warning("dynamic cordis close without a running loop: "
+                            "%d retracts deferred", len(pending_retracts))
+                self._retract_task = None
         else:
             self._retract_task = None
         self._registry.close()

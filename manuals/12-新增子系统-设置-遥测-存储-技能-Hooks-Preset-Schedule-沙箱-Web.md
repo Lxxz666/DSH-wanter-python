@@ -24,10 +24,10 @@
 | —（注入 `tools`） | tool-web | `dsh/web/tool.py` | `web_fetch`/`web_search`（DDG lite 尽力而为） |
 | `userQuestions` | user-questions + tool-ask-user | `dsh/interaction/user_questions.py` | 文本问答通道 + `ask_user` 工具 |
 | `skills` | skill + skill-filesystem + tool-skill | `dsh/skill/skill.py` | 技能发现（SKILL.md）与加载注入 |
-| —（注入 `subprocess`） | hook-protocol + 桥 | `dsh/hooks/hooks.py` | hooks.yml 最小桥（五监听点 + 日志事件） |
+| —（注入 `subprocess`） | hook-protocol + 桥 | `dsh/hooks/hooks.py` + `compat.py` | hooks.yml 最小桥 + Claude Code/Codex 文件格式兼容桥（五监听点 + 日志事件） |
 | `agentPresets` | agent-presets | `dsh/preset/presets.py` | preset yml 行挂进 agent 作用域（isolate 等价物） |
 | `schedule` | schedule / cron | `dsh/schedule/schedule.py` | 间隔任务 → agent.inject 通知 |
-| `sandbox` | ctx.sandbox（landlock/sandbox-exec/ACL） | `dsh/sandbox/sandbox.py` | 进程限制缝（identity stub，留扩展点） |
+| `sandbox` | ctx.sandbox（landlock/sandbox-exec/ACL） | `dsh/sandbox/sandbox.py` | 进程限制缝：Windows Job Object（kill-on-close）+ Linux Landlock（只读 FS + 工作区可写）；不可用如实降级 local |
 | `sessionPersistence`（后端之一） | session-persistence-sqlite | `dsh/persistence/sqlite.py` | SQLite 单库两表会话后端 |
 
 > 服务 key 列为 `—` 的子系是**插件**（无 `provides`），它们把工具/监听器/分节挂到既有服务上，不新增 `ctx.<key>`。
@@ -294,43 +294,85 @@
 - **边界**：`_parse` 用同步 `open`（无锁）；解析失败按技能跳过（不中断整体发现）；`get` 每次全量 list（O(n)）。
 - **TS 对应**：`skill` + `skill-filesystem` + `tool-skill`。
 
-### 2.9 hooks —— HooksPlugin
+### 2.9 hooks —— HooksPlugin + HooksCompatPlugin（第十一批重构）
 
 - **定位与依赖**：`inject = ("subprocess",)`。配置 `~/.dsh/hooks.yml`（`config.path` 可换）。模块导入时即注册两个事件类型：`hook/invoked`、`hook/result`（log-only）。
 - **模块级常量**：`HOOK_EVENTS = ("session-start", "pre-step", "pre-tool", "post-tool", "turn-stopping")`。
 - **`_NoBoolLoader(yaml.SafeLoader)`**：类体内 `_NoBoolLoader.add_constructor("tag:yaml.org,2002:bool", lambda loader, node: loader.construct_scalar(node))`——**禁用 YAML 1.1 布尔解析**，否则裸键 `on` 会被解析成 `True`。
-- **类型与字段表（HooksPlugin）**
+- **第十一批重构**：运行器抽为模块级函数（`hooks_for` / `run_hook` / `_substitute_vars`），
+  HooksPlugin 与 HooksCompatPlugin（Claude/Codex 兼容桥，`dsh/hooks/compat.py`）共用同一套。
 
-  | 字段 | 类型 | 默认 | 说明 |
-  |---|---|---|---|
-  | `path` | `str` | `~/.dsh/hooks.yml` | 配置文件路径 |
-  | `_disposers` | `List[Any]` | `[]` | 事件注销函数 |
-  | `_hooks` | `List[Dict[str, Any]]` | `[]` | 过滤后的 hook 条目 |
+**类型与字段表（HooksPlugin / HooksCompatPlugin 共用形状）**
 
-- **函数/方法详解**
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `path` / `paths` | `str` / `List[str]` | `~/.dsh/hooks.yml` / 发现清单 | 配置文件路径 |
+| `_disposers` | `List[Any]` | `[]` | 事件注销函数 |
+| `_hooks` | `List[Dict[str, Any]]` | `[]` | 归一化后的 hook 行 |
 
-  - `HooksPlugin.__init__(self, ctx, config: Optional[dict] = None) -> None`：如字段表。
-  - `HooksPlugin.apply(self, ctx) -> None`：`_load()`；订阅 `agent/session-start → _on_session_start`、`agent/pre-step → _on_pre_step`、`tools/pre-execute → _on_pre_tool`、`tools/post-execute → _on_post_tool`、`agent/turn-stopping → _on_turn_stopping`；返回 `cleanup()` 注销并清空。**监听点全走既有扩展点，不修改循环**。
-  - `HooksPlugin._load(self) -> None`：`try: text = open(...).read(); data = yaml.load(text, Loader=_NoBoolLoader) or {}`；`except (OSError, yaml.YAMLError): _hooks = []; return`；`_hooks = [h for h in (data.get("hooks") or []) if h.get("on") in HOOK_EVENTS]`。
-  - `HooksPlugin._for(self, event: str, tool_name: Optional[str] = None) -> List[dict]`：过滤 `hook.get("on") == event`；若 `tools = hook.get("tools")` 非空且（`tool_name is None` 或 `tool_name not in tools`）→ 跳过。
-  - `HooksPlugin._run(self, agent: Optional[Any], hook: Dict[str, Any], tool_name: Optional[str] = None) -> Dict[str, Any]`（`async def`）：
-    1. `handler_id = f"hook-{uuid.uuid4().hex[:8]}"`；
-    2. agent 非 None → `try: agent.session.append("hook/invoked", {handler_id, name, on, tool})`；`except: pass`；
-    3. `env = {**os.environ, "DSH_HOOK_TOOL": tool_name}`（仅当 tool_name 非空）；
-    4. `from ..subprocess import IS_WINDOWS`；`command = ["pwsh","-NoProfile","-Command",hook["command"]] if IS_WINDOWS else ["bash","-lc",hook["command"]]`；
-    5. `result = await self.ctx.subprocess.run(command, cwd=self.ctx.fs.workspace_root() if self.ctx.has("fs") else os.getcwd(), timeout=60, env=env)`；`outcome = {"exit_code": result.exit_code, "output": (result.stdout + result.stderr).strip()[:2000]}`；
-    6. `except Exception as exc: outcome = {"exit_code": -1, "output": f"hook error: {exc}"}`（**执行异常不抛，转为 exit_code=-1**）；
-    7. agent 非 None → `try: agent.session.append("hook/result", {handler_id, name, exit_code, output})`；`except: pass`；
-    8. `return outcome`。
-  - `HooksPlugin._on_session_start(self, payload: Dict[str, Any]) -> None`（同步）：`agent = payload.get("agent")`；对 `_for("session-start")` 每个 hook：`asyncio.get_running_loop().create_task(self._run(agent, hook))`（**fire-and-forget**）。
-  - `HooksPlugin._on_pre_step(self, payload: Dict[str, Any], next)`（`async def`）：`agent = payload.get("agent")`；对 `_for("pre-step")`：`outcome = await _run(agent, hook)`；`exit_code != 0` → `return {"kind": "reject"}`；否则 `return await next()`。
-  - `HooksPlugin._on_pre_tool(self, execution, next)`（`async def`）：对 `_for("pre-tool", execution.name)`：`outcome = await _run(execution.agent, hook, execution.name)`；`exit_code != 0` → `decision = hook.get("decision", "deny")`；`"ask"` → `return AskDecision(outcome["output"] or "hook asks")`，否则 `return DenyDecision(outcome["output"] or "hook denied")`；否则 `return await next()`。
-  - `HooksPlugin._on_post_tool(self, execution, result, next)`（`async def`）：对 `_for("post-tool", execution.name)`：`exit_code != 0` → `return BlockDecision(outcome["output"] or "hook blocked")`；否则 `return await next()`。
-  - `HooksPlugin._on_turn_stopping(self, payload: Dict[str, Any]) -> None`（`async def`）：`agent = payload.get("agent")`；对 `_for("turn-stopping")`：`await _run(agent, hook)`。
+**行级扩展键（第十一批，兼容桥用）**：`tool_pattern`（正则工具名过滤）、
+`stdin_json`（Claude 契约：JSON 写命令 stdin）、`vars`（Codex 契约：
+command 内 `$VAR`/`${VAR}` 替换）。
+
+**模块级函数详解**
+
+- `hooks_for(hooks, event, tool_name=None) -> List[dict]`：过滤
+  `hook.get("on") == event`；`tools` 精确列表非空且 `tool_name` 不在内 → 跳过；
+  `tool_pattern` 存在且 `re.search(pattern, tool_name)` 不命中 → 跳过。
+- `_substitute_vars(command, ctx, agent, tool_name) -> str`：从
+  `os.environ ∪ {CWD, SESSION_ID, ARGUMENTS}` 替换 `$VAR`/`${VAR}`
+  （best-effort，未知名保留原样）。
+- `run_hook(ctx, agent, hook, tool_name=None, env=None) -> Dict[str, Any]`
+  （`async def`）：
+  1. `handler_id = f"hook-{uuid.uuid4().hex[:8]}"`；
+  2. agent 非 None → `try: agent.session.append("hook/invoked", {handler_id,
+     name, on, tool})`；`except: pass`；
+  3. `hook.get("vars")` → `command = _substitute_vars(...)`；
+     `run_env = dict(os.environ, **(env or {}))`；tool_name 非空 →
+     `run_env["DSH_HOOK_TOOL"] = tool_name`；
+  4. `hook.get("stdin_json")` → `stdin_data = json.dumps({session_id,
+     hook_event_name, tool_name})`；
+  5. `["pwsh","-NoProfile","-Command",command]`（Windows）/ `["bash","-lc",
+     command]`（POSIX）→ `ctx.subprocess.run(..., timeout=60, env=run_env,
+     stdin_data=stdin_data)`；`outcome = {exit_code, output: (stdout+stderr)
+     .strip()[:2000]}`；
+  6. `except Exception → outcome = {"exit_code": -1, "output": "hook error:
+     ..."}`（**执行异常不抛，转为 exit_code=-1 → fail-closed**）；
+  7. agent 非 None → `try: append("hook/result", {handler_id, name,
+     exit_code, output})`；`except: pass`；`return outcome`。
+
+**HooksPlugin 方法**：`__init__`（如字段表）；`apply`（`_load()` + 五监听点
+订阅 + `cleanup()`）；`_load`（yaml 解析失败 → `_hooks = []`，只保留
+`on ∈ HOOK_EVENTS` 的行）；五个监听点
+（`_on_session_start` fire-and-forget / `_on_pre_step` 非零退出 →
+`{"kind": "reject"}` / `_on_pre_tool` 非零退出 → `AskDecision`（decision=ask）
+或 `DenyDecision`（默认） / `_on_post_tool` 非零退出 → `BlockDecision` /
+`_on_turn_stopping`）——全部经 `hooks_for`/`run_hook`。
+
+**HooksCompatPlugin（Claude Code / Codex 兼容桥，`dsh/hooks/compat.py`）**
+
+- `discover_paths(config)`：默认发现顺序 `~/.claude/settings.json`、
+  `~/.claude/settings.local.json`、`./.claude/settings.json`、
+  `./.claude/settings.local.json`、`~/.codex/config.toml`、
+  `./.codex/config.toml`（`config.paths` 可覆盖）。
+- `load_claude_hooks(path)`：JSON 解析 `hooks` 键；事件映射
+  `PreToolUse→pre-tool`、`PostToolUse→post-tool`、`UserPromptSubmit→pre-step`、
+  `SessionStart→session-start`、`Stop→turn-stopping`；其余（Notification/
+  SubagentStop/PreCompact）不映射（记日志）；每行产出 `{name, on, command,
+  decision: "deny", tool_pattern: matcher, stdin_json: True}`。
+- `load_codex_hooks(path)`：`tomllib` 解析 `[hooks]` 段；映射
+  `Command→pre-tool`、`SessionStart→session-start`、`Stop/SessionEnd→
+  turn-stopping`；Notification 不映射；每行 `{name, on, command, decision:
+  "deny", vars: True}`。
+- `apply`：无配置文件时**完全 no-op**（不订阅任何监听点）；有 hook 时挂与
+  HooksPlugin 相同的五监听点（复用 `hooks_for`/`run_hook`）。
+- **语义差异（如实标注）**：Claude matcher 按正则匹配工具名（非完整 Claude
+  输入匹配语义）；Claude exit 2 与普通非零统一视为拦截；Codex `$VAR` 为
+  best-effort 环境替换（`$FILE_PATH` 等未实现变量原样保留）。
 
 - **事件**：订阅 `agent/session-start`、`agent/pre-step`（waterfall）、`tools/pre-execute`（waterfall）、`tools/post-execute`（waterfall）、`agent/turn-stopping`；发布 `hook/invoked`、`hook/result`（经 `agent.session.append` 落为 log-only 事件）。
 - **决策语义**：pre-tool 的 `decision` 取 `deny`（默认）/`ask`；`allow` 由「不拦截即 `next()`」隐式表达。pre-step 非零退出 = reject。post-tool 非零退出 = block。
-- **TS 对应**：`hook-protocol` + claude/codex 桥的 YAML 化（最小桥）。
+- **TS 对应**：`hook-protocol` + claude/codex 桥（YAML 化最小桥 + 文件格式兼容子集）。
 
 ### 2.10 preset —— AgentPresets
 
@@ -424,15 +466,17 @@
 
   | 字段 | 类型 | 默认 | 说明 |
   |---|---|---|---|
-  | `_mode` | `str` | `config.get("mode", "auto")` | auto（win32→jobobject，否则 local）/ jobobject / local |
+  | `_mode` | `str` | `config.get("mode", "auto")` | auto（win32→jobobject，linux→landlock，否则 local）/ jobobject / landlock / local |
   | `_job` | `WindowsJobObject \| None` | `None` | Job Object 后端（`dsh/sandbox/jobobject.py`，ctypes） |
   | `_job_error` | `str \| None` | `None` | Job 不可用时的降级原因（describe 如实标注） |
+  | `_landlock_ok` | `bool` | `False` | Landlock 可用性（`available()` 探针，ABI v1+） |
+  | `_landlock_error` | `str \| None` | `None` | Landlock 不可用时的降级原因 |
 
 - **函数/方法详解**
 
-  - `SandboxService.__init__`：mode 校验（未知抛 `ToolError`）；jobobject 模式在非 Windows 抛 `ToolError`；`CreateJobObjectW + SetInformationJobObject(KILL_ON_JOB_CLOSE[, JOB_MEMORY])` 失败 → **降级 local 并记录原因**（不装死，如实报告）。
-  - `SandboxService.attach(self, pid: int) -> None`：`job.assign(pid)`（OpenProcess + AssignProcessToJobObject；进程已退出返回 False 不抛错）；identity 后端 no-op。
-  - `SandboxService.confine(self, argv, cwd)`：`return list(argv)`（Job 后端无需改写；cwd 由调用方限定）。
+  - `SandboxService.__init__`：mode 校验（未知抛 `ToolError`）；jobobject 模式在非 Windows 抛 `ToolError`；`CreateJobObjectW + SetInformationJobObject(KILL_ON_JOB_CLOSE[, JOB_MEMORY])` 失败 → **降级 local 并记录原因**（不装死，如实报告）；landlock 模式经 `available()` 探针（非 Linux / 内核无 ABI v1+ → `_landlock_error` + 降级）。
+  - `SandboxService.attach(self, pid: int) -> None`：`job.assign(pid)`（OpenProcess + AssignProcessToJobObject；进程已退出返回 False 不抛错）；identity/landlock 后端 no-op。
+  - `SandboxService.confine(self, argv, cwd)`：landlock 可用时返回 `wrapper_argv(cwd, list(argv))`（包装器先应用「只读 FS + cwd 可写」再 exec 目标命令）；否则 `return list(argv)`（jobobject/local 无需改写，cwd 由调用方限定）。
   - `SandboxService.describe()`：`{"mode", "confinement", "active", "degraded"?}`——active=False 时如实标注。
   - `SandboxService.close()`：关闭 Job 句柄 → **kill-on-close** 终止全部挂入子进程（幂等）。
 - **WindowsJobObject**：`assign(pid) -> bool`；`close()`。注意：Windows 对经 Job 终止的进程常报告**退出码 0**——判定「被杀」看远早于自然结束。
@@ -494,7 +538,7 @@
 
 | 子系统 | TS 版概念 | Python 实现 | 差异/简化 |
 |---|---|---|---|
-| sandbox | landlock / sandbox-exec / Windows ACL 真实围栏 | 第十批起：Windows = Job Object（kill-on-close + 可选内存上限，`attach(pid)` 接入 subprocess 服务）；POSIX = local identity | **Job Object 覆盖生命周期/内存**，非容器（文件/网络不限制，由 fs 工作区围栏承担）；不可用时降级 local 并在 `describe()` 如实标注 |
+| sandbox | landlock / sandbox-exec / Windows ACL 真实围栏 | 第十批起：Windows = Job Object（kill-on-close + 可选内存上限，`attach(pid)` 接入 subprocess 服务）；第十一批起：Linux = Landlock（只读 FS + 工作区可写，包装器进程先应用再 exec）；其余 POSIX = local identity | **Job Object 覆盖生命周期/内存、Landlock 覆盖文件系统**，均非容器；不可用时降级 local 并在 `describe()` 如实标注 |
 | presets | roster / isolate realm / `mount` / `composeFrom` | preset yml 行挂进 agent 作用域，局部 `ToolRuntime(parent=根运行时)` = 父层作用域视图（第七批全委托） | **基础版 isolate 等价物**：作用域化（服务/工具/分节仅该 agent 及其后代可见），非完整 roster/composeFrom；`join(parent)` 简化为「父作用域为 parent 创建」 |
 | hooks | hook-protocol（结构化 handler 协议）+ claude/codex 桥 | hooks.yml：shell 命令 + 五监听点 | **hooks.yml 最小桥**：命令是 shell 字符串，非 JS handler；`pre-tool` 只有 `deny`/`ask`（`allow` 由「不拦截」隐式表达）；`pre-step` 非零退出 = reject |
 | schedule | schedule / cron（cron 表达式、日历语义） | interval 与 cron 两种条目 + 每秒轮询 | **interval + cron 表达式**（5/6 字段，见手册 15）；busy 排队 / idle 等下一次唤醒与 TS cron 一致；无 storage 时仅内存 |

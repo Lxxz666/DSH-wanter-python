@@ -16,6 +16,25 @@
   - `session/tools/agent/llm` 等域模块都继承 `Service` 或通过 `Context` 注册/取用服务，并把各自事件挂到 `ctx.events` 上。
   - `dsh.boot`（框架入口）组合 `Context` + `PluginTree` 完成启动。
 
+### 1.1 `dsh/errors.py` 错误体系总表（全框架 14 个公开异常类）
+
+| 异常类 | 基类 | 抛出场景 |
+|---|---|---|
+| `DshError` | `Exception` | **框架根异常**（一切域异常的基类） |
+| `ContextError` | DshError | Context/事件派发域错误 |
+| `ServiceNotFoundError` | ContextError | `ctx.<key>` 服务不存在（key 存属性） |
+| `LoaderError` | DshError | 配置树加载/挂载失败（entry_id/stage 属性，消息带 `[id]` 前缀） |
+| `SessionError` | DshError | 会话域错误（append 校验失败等） |
+| `SessionFormatError` | SessionError | 无法忠实解读的日志格式（direction：版本过新/过旧） |
+| `ToolError` | DshError | 工具调用结构化失败（`code`：TOOL_ERROR/UNKNOWN_TOOL/DENIED/GUARDED/BLOCKED/ABORTED/TIMEOUT/MCP_*/CODE_RUN_FAILED…；`message` 属性） |
+| `ToolNotFoundError` | ToolError | 未知工具（code=UNKNOWN_TOOL，`name` 属性） |
+| `ToolArgsError` | ToolError | 参数不符合 schema（code=INVALID_ARGS） |
+| `ToolOutputError` | ToolError | 输出不符合 canonical schema（code=INVALID_TOOL_OUTPUT） |
+| `LlmFailure` | DshError | 模型请求结构化失败（code/provider 属性） |
+| `LlmTimeoutError` | LlmFailure | 请求超时（code=TIMEOUT） |
+| `AgentError` | DshError | Agent 域错误（如 run_maintenance 时 busy/disposed） |
+| `ApprovalDeniedError` | DshError | 审批被拒绝 |
+
 ## 2. 文件清单表
 
 | 文件 | 职责 |

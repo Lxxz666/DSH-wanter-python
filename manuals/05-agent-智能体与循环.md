@@ -402,7 +402,7 @@ def _parse_args(arguments: Optional[str]) -> Any:
 ```python
 def close(self) -> None:
 ```
-- 取消所有 driver task，清 `_drivers`。
+- 取消所有 driver task 并清 `_drivers`（**幂等**：`done()` 的 task 跳过 cancel，重复调用无副作用）。
 
 ### 4.5 `dsh/agent/plugins.py`
 
@@ -545,6 +545,7 @@ _run_step(agent, turn, step, batch, first) -> 'continue'|'stop'|'retry'|'abort':
 | `agent/pre-step` | waterfall | `{agent, messages, turn, step, signal}` | 进入 step 前的决策（reject / enter(messages)） |
 | `agent/request` | waterfall | `{agent, turn, step, signal}` | 决定调用配置（`next` 返回 `LlmCallConfig`） |
 | `agent/request-error` | waterfall | 同 request + `failure` | 请求失败后的补救（`{"kind":"retry"}` 触发重试） |
+| `agent/request-done` | emit | `{agent, turn, step, provider, model, usage, latency_ms}` | 每次成功模型请求的观测广播（perf_counter 计时；mock 无计量时 usage=None） |
 | `agent/turn-stopping` | serial | `{agent, turn}` | turn 自然停止后的终态检查点（可 steer 出新一步） |
 | `agent/error` | emit | `{agent, turn, step, error}` | turn 以错误结束时广播（`_TurnFailed`、未知异常、retry 上限三分支） |
 

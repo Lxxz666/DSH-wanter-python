@@ -15,6 +15,10 @@
   - 依赖 `..errors`（`SessionError`、`SessionFormatError`）、`..ids.new_message_id`。
   - `derive_event_message` 延迟导入 `..llm.messages`（`ContentBlock`/`Message`）做投影。
   - 持久化由订阅 `session/event` 的插件（如 `dsh/persistence`）负责，本模块只广播。
+- **`dsh/ids.py` 身份铸造**（会话域用到的两个）：`new_session_id() -> str`
+  （`session-xxxx`，10 位 hex）、`new_message_id() -> str`（`msg-xxxx`）、
+  `new_call_id() -> str`（`call-xxxx`，工具调用 id，配对 `tool/call` 与
+  `tool/result`；注册表/循环用它做 call_id）。
 
 ## 2. 文件清单表
 

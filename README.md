@@ -3,10 +3,10 @@
 **DeepSeek Harness 的 Python 重实现** —— 一切皆插件的智能体框架。
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)]()
-[![Tests](https://img.shields.io/badge/tests-216%20passed-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-216%20passed%20%C2%B7%201%20skipped-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 [![Manuals](https://img.shields.io/badge/manuals-21%20%E7%AB%A0-orange)]()
-[![Lines](https://img.shields.io/badge/%E4%BB%A3%E7%A0%81-22k%2B-blueviolet)]()
+[![Lines](https://img.shields.io/badge/dsh%20%E5%8C%85-13k%2B%20%E8%A1%8C-blueviolet)]()
 
 用纯 Python 完整复刻 dsh 的架构线：**Cordis 式插件内核**（Context 服务仓库、四种事件派发、
 可逆效应、YAML 配置树 + 热重载）、**事件溯源会话日志**、**五段工具管线**、**LLM 接缝**、
@@ -133,7 +133,7 @@ dsh_python/
 │   ├── wanter/           # wanter 动力学（引擎/插件/校准/可视化）
 │   ├── config/ boot.py cli/   # 组合与启动
 │   └── server/           # FastAPI Web 服务（REST/SSE/地形面板/会话树）
-├── tests/                # pytest 套件（216 用例 + fixtures）
+├── tests/                # pytest 套件（217 用例 + fixtures；Windows 上 216 passed + 1 skipped）
 ├── examples/             # 示例插件 + wanter 实验/图表（SVG 产出）
 └── manuals/              # 21 章中文开发手册（函数级技术细节）
 ```

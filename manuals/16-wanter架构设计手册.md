@@ -150,8 +150,15 @@ dx = −∇Φ(x,t) dt + √(2D) dWₜ
 | `dsh/wanter/coordinator.py` | `HashCoordinator` / `MockEmbeddingCoordinator` / `HttpEmbeddingCoordinator` / `build_coordinator`（状态摘要 → 坐标缝） |
 | `dsh/wanter/engine.py` | `WanterEngine`（ctx.wanter）：编排 + 后台蒸发循环 + storage 持久化（domain "wanter"）+ embed/add_goal/completed(任一阱)/report_and_maybe_erode |
 | `dsh/wanter/plugin.py` | `WanterPlugin`（沉积/淤积、feedback 回填、coordinator 平滑、停滞侵蚀+steer）+ `ToolWanterGoalsPlugin`（wanter_goal_* 工具）——零循环修改 |
+| `dsh/wanter/viz.py` | `render_terrain_svg`（2D 热力图/1D 剖面/高维前两轴投影）+ `render_terrain_state`（面板 JSON）+ `render_calibration_chart`（校准对比 SVG） |
+| `dsh/wanter/calibration.py` | `build_calibration_terrain` / `OracleEmbeddingProvider` / `run_matching_experiment` / `run_calibration`（语义坐标校准：短程高斯洼地 + oracle vs hash，见 §7.5/§8） |
 | `examples/wanter_demo.py` | 双势阱 SVG 可视化（纯 Python，无依赖） |
+| `examples/wanter_benchmark.py` | 确定性种子基准（20 种子 A/B 对照 + 学习曲线 + 性能）→ `wanter_metrics.json` |
+| `examples/wanter_charts.py` | 四面板展示图 → `wanter_showcase.svg`（README/WANTER.md 引用） |
+| `examples/wanter_embedding_calibration.py` | 语义坐标校准 → `wanter_embedding_metrics.json` + `wanter_embedding_chart.svg` |
 | `tests/test_wanter.py` | 17 项物理/集成测试 |
+| `tests/test_wanter_metrics.py` | 核心性质回归守护（安全余量断言，CI 防线） |
+| `tests/test_wanter_calibration.py` | 校准回归（oracle 对齐 + 显著优于 hash） |
 
 ### 5.2 实验证据（17/17 通过）
 
@@ -293,6 +300,35 @@ wanter 逃逸率 ≥ 0.85、噪声基线 ≤ 0.1、纯梯度 = 0；学习斜率�
 **结论**：坐标质量直接决定子任务路由——语义对齐的嵌入让任务直接落在自家
 盆地（1 步即达）；哈希伪嵌入与目标布局无关，必然迷路。生产接入 =
 Coordinator 缝（hash/mock/http，OpenAI 兼容 /embeddings，失败回退 hash）。
+
+## 8. 可视化与校准模块（第十批/第十一批，函数级）
+
+### 8.1 `dsh/wanter/viz.py`
+
+| 函数 | 签名 | 说明 |
+|---|---|---|
+| `_palette(t: float) -> str` | 模块级 | t∈[0,1] 发散配色：蓝（高）→暗（中）→绿（低） |
+| `render_terrain_svg(engine, size=520, grid=64, title=...) -> str` | 模块级 | 地形 SVG：dim==1 → 剖面曲线（`_render_1d`）；否则 2D 热力图（`_render_2d`：`_window` 取目标 ±3σ 窗口、逐格 `engine.phi` 归一化着色、目标绿环/侵蚀红点/迹紫点抽样 `[::7]`） |
+| `_render_2d/_render_1d/_to_px/_window` | 模块级 | 内部渲染助手 |
+| `render_terrain_state(engine) -> dict` | 模块级 | 面板 JSON 状态（dim/goals/sigma/侵蚀坑数/迹事件数/decay_rate/completed） |
+| `render_calibration_chart(metrics) -> str` | 模块级 | 校准双栏图表（匹配率 % + 平均步数） |
+
+消费方：Web 端点 `GET /api/wanter/terrain`（SVG）、`/api/wanter/state`（JSON）、
+`/static/wanter.html`（3s 自动刷新）；`examples/wanter_panel_preview.svg`。
+
+### 8.2 `dsh/wanter/calibration.py`（语义坐标校准，第十一批）
+
+| 常量/类/函数 | 签名 | 说明 |
+|---|---|---|
+| `DEFAULT_GOALS / DEFAULT_LABELS / WELL_DEPTH` | 模块级 | 4 个目标（±5 轴距）、4 个任务标签、势阱深度 3.0 |
+| `build_calibration_terrain(goals=None, sigma=1.0) -> Terrain` | 模块级 | **短程高斯洼地**（add_bump 负高度）——设计注：Terrain 目标模型为长程二次阱，多目标时远阱干扰制造人造中心鞍点（首版实验 0% 收敛） |
+| `OracleEmbeddingProvider(goals=None, jitter=0.2)` | 类 | 模拟训练好的语义嵌入：`embed(label)` = 目标 + 标签哈希确定性抖动（复现性） |
+| `run_matching_experiment(provider, goals, labels, seeds, step_cap=1200, lr=0.1, D=0.005, complete_radius=0.5) -> dict` | 模块级 | 种子 × 任务水滴 Langevin 下降；返回 matching（落入自己目标比率）/mean_steps/per_task |
+| `run_calibration(seeds=(0..7)) -> dict` | 模块级 | hash（HashCoordinator）vs oracle 对照：实测 **hash 匹配 0% / oracle 100%（1 步）** |
+
+消费方：`examples/wanter_embedding_calibration.py`（metrics JSON + SVG）、
+`tests/test_wanter_calibration.py`（oracle 对齐 + oracle 显著优于 hash 的
+安全余量断言）。
 
 **设计注（陷阱记录）**：Terrain 的目标模型是**长程二次阱**
 （0.5·strength·|x−goal|²），多目标时远阱干扰主导（φ≈10² 量级），会把人造
