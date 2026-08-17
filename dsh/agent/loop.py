@@ -194,6 +194,8 @@ class AgentLoopService(Service):
         session = agent.session
         agent._turn_number += 1
         turn = agent._turn_number
+        # 每个 turn 重新武装取消语义：上个 turn 的 cause 不得泄漏到本 turn
+        agent._cancel_cause = None
         agent._turn_signal = AbortSignal()
         session.append("turn/start", {"turn": turn})
         reason: Dict[str, Any] = {"kind": "completed"}
@@ -249,6 +251,8 @@ class AgentLoopService(Service):
                                    "error": reason["error"]})
         if agent._turn_signal is not None and agent._turn_signal.aborted:
             reason = self._abort_reason(agent)
+        # turn 收尾即清除取消语义：cause 不得跨 turn 泄漏到后续轮次
+        agent._cancel_cause = None
         session.append("turn/end", {"turn": turn, "reason": reason})
 
     def _abort_reason(self, agent: Agent) -> Dict[str, Any]:
@@ -442,13 +446,19 @@ class AgentLoopService(Service):
                         else ("mock" if "mock" in providers else providers[0]))
         if not model:
             model = "mock" if provider == "mock" else "deepseek-chat"
+        # `is not None` 判断（`or` 会把合法的 0 值如 temperature=0 当未设置）
         return LlmCallConfig(
             provider=provider, model=model,
-            max_tokens=agent.options.get("max_tokens") or defaults.get("max_tokens"),
-            temperature=agent.options.get("temperature")
-            or defaults.get("temperature"),
-            reasoning_effort=agent.options.get("reasoning_effort")
-            or defaults.get("reasoning_effort"))
+            max_tokens=(agent.options.get("max_tokens")
+                        if agent.options.get("max_tokens") is not None
+                        else defaults.get("max_tokens")),
+            temperature=(agent.options.get("temperature")
+                         if agent.options.get("temperature") is not None
+                         else defaults.get("temperature")),
+            reasoning_effort=(agent.options.get("reasoning_effort")
+                              if agent.options.get("reasoning_effort")
+                              is not None
+                              else defaults.get("reasoning_effort")))
 
     @staticmethod
     def _chunk_json(chunk: StreamChunk) -> Dict[str, Any]:

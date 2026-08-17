@@ -82,6 +82,8 @@ class WanterEngine(Service):
         self._evaporate_task: Optional[asyncio.Task] = None
         self._dirty = False
         """脏标志：地形/迹有变更才需要落盘（蒸发 tick 去抖）。"""
+        self._positions: Dict[str, tuple] = {}
+        """当前水滴位置（WanterPlugin 维护；goal_complete 等消费方读取）。"""
 
     def _mark_dirty(self) -> None:
         self._dirty = True
@@ -90,6 +92,14 @@ class WanterEngine(Service):
     def goal(self):
         """主目标（第一个势阱中心；无目标为 None）。"""
         return self.terrain.goal
+
+    def set_position(self, session_id: str, point: Any) -> None:
+        """记录某会话水滴的当前位置（WanterPlugin 在每次移动后调用）。"""
+        self._positions[session_id] = tuple(point)
+
+    def get_position(self, session_id: str) -> Optional[tuple]:
+        """取某会话水滴当前位置（无记录 → None，调用方自行回退）。"""
+        return self._positions.get(session_id)
 
     def apply(self, ctx) -> None:
         ctx.set("wanter", self)

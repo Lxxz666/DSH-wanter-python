@@ -127,15 +127,17 @@ class McpClient:
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
         self._pending[request_id] = future
-        await self._write({"jsonrpc": "2.0", "id": request_id,
-                           "method": method, "params": params or {}})
         try:
-            envelope = await asyncio.wait_for(
-                asyncio.shield(future), timeout=timeout or self.timeout)
-        except asyncio.TimeoutError as exc:
-            raise ToolError(f"MCP request {method} timed out",
-                            code="MCP_TIMEOUT") from exc
+            await self._write({"jsonrpc": "2.0", "id": request_id,
+                               "method": method, "params": params or {}})
+            try:
+                envelope = await asyncio.wait_for(
+                    asyncio.shield(future), timeout=timeout or self.timeout)
+            except asyncio.TimeoutError as exc:
+                raise ToolError(f"MCP request {method} timed out",
+                                code="MCP_TIMEOUT") from exc
         finally:
+            # 写入失败/超时/异常一律清理 pending，绝不滞留 future
             self._pending.pop(request_id, None)
         if isinstance(envelope, dict) and "error" in envelope:
             error = envelope["error"]

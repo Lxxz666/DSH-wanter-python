@@ -118,6 +118,10 @@ class Agent:
             self.inbox.clear()
         if self._turn_signal is not None:
             self._turn_signal.abort(self._cancel_cause)
+        else:
+            # 无活跃 turn（取消发生在驱动认领之前）：cause 立即消费完毕，
+            # 不得残留到下一个 turn
+            self._cancel_cause = None
         if self._maintenance is not None:
             self._maintenance.cancel()
         self._wakeup.set()

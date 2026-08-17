@@ -171,7 +171,7 @@ def validate(self, seq: int, surface_op: Optional[Any],
 def commit(self, seq: int, surface_op: Optional[Any]) -> None:
 ```
 
-- 行为：`None` 直接返回；`"append"` → `nodes.append(seq)`；`replace` → 删除 `[start,end]` 内节点后追加 `seq`，`replace_generation += 1`。
+- 行为：`None` 直接返回；`"append"` → `nodes.append(seq)`；`replace` → 删除 `[start,end]` 内节点后**把 `seq` 插入到被替换区间所在位置**（start 节点原位置；压缩最旧前缀时摘要仍在剩余消息之前——审计批次修复：早期实现 append 到末尾会把摘要排到最后），`replace_generation += 1`。
 
 #### 模块级 `derive_event_message`
 
@@ -336,10 +336,12 @@ async def _drain_pending(self) -> None:
 #### `SessionStore._on_flush`
 
 ```python
-async def _on_flush(self, session: Session) -> bool:
+async def _on_flush(self, session: Session) -> Optional[bool]:
 ```
 
-`session/flush` 监听器，返回 `True`（保证 `flush` 能检测到有监听者参与；实际写入由其它持久化插件完成）。
+`session/flush` 汇聚监听器，返回 **None**（不声称持久化参与——「是否有持久化
+监听器参与」由真实持久化插件返回 True 决定；审计批次修复：早期恒返回 True
+使无持久化插件时 `flush()` 仍报 True）。
 
 #### `SessionStore.create`
 
@@ -401,7 +403,7 @@ def list(self) -> List[Session]:
 async def flush(self, session: Session) -> bool:
 ```
 
-- 返回：是否有持久化监听器参与（`len(results) > 0`）。
+- 返回：是否有持久化监听器参与（`any(result for result in results)`，None 结果不计）。
 - 行为：先 `await _drain_pending()`（保证持久化插件已看到全部事件），再 `parallel("session/flush", session)`。
 
 #### `SessionStore.remove`
@@ -420,7 +422,7 @@ def fork(self, source: Session, boundary: Optional[int] = None,
 ```
 
 - 参数：`boundary`（含端点源 seq；省略 = 当前最后一条）。
-- 行为：`boundary = len(source._events) - 1 if None else boundary`；`< 0` 归为 `-1`；`prefix = source._events[:boundary+1]`；若 prefix 最后一条是 `turn/start` 抛 `ValueError`（不得结束于未关闭 turn 内）；`create(child_session_id, meta={parent_session, seed_length, cwd, delegation_depth+1}, seed=prefix)`。
+- 行为：`boundary = len(source._events) - 1 if None else boundary`；`< 0` 归为 `-1`；`prefix = source._events[:boundary+1]`；**turn 深度平衡校验**——扫描前缀内 `turn/start`/`turn/end` 计数，深度 > 0 抛 `ValueError`（不得结束于开放 turn 内；审计批次修复：早期只查最后一条是否为 `turn/start`，检不出「结束于 turn 中段」）；`create(child_session_id, meta={parent_session, seed_length, cwd, delegation_depth+1}, seed=prefix)`。
 - 边界：子会话经 `Session(seed=...)` 再补 `session/end-seed`，且 seed 回放不广播。
 
 #### `SessionStore.close`
@@ -486,7 +488,7 @@ def title_for(self, session: Any, messages: Optional[List[Any]] = None) -> str:
 | `session/event` | `emit`（`SessionStore._publish`） | 每次 append 后同步广播（session, event），持久化插件据此写日志。 |
 | `session/created` | `emit`（`announce`） | 新会话进入存储时公告；同步监听器 throw 会回滚该会话。 |
 | `session/disposed` | `emit`（`remove`） | 会话离开存储时公告。 |
-| `session/flush` | `parallel`（`flush`） | awaited 持久化 checkpoint；`_on_flush` 内置监听器保证有参与者。 |
+| `session/flush` | `parallel`（`flush`） | awaited 持久化 checkpoint；store 自身的 `_on_flush` 返回 None（不声称参与），真实持久化插件返回 True，`flush()` 用 `any(results)` 判定。 |
 
 扩展方式：`register_event_type(name, description, surface=...)` 注册新事件词汇；surface 事件需在 append 时携带合法 `surface_op`。
 

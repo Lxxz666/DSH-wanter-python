@@ -62,9 +62,12 @@ class SessionStore(Service):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _on_flush(self, session: Session) -> bool:
-        """session/flush 监听器：汇聚持久化插件（具体写入由它们完成）。"""
-        return True
+    async def _on_flush(self, session: Session) -> Optional[bool]:
+        """store 自身的汇聚监听器：不声称持久化参与（返回 None）。
+
+        契约：「是否有持久化监听器参与」由真实持久化插件（返回 True）决定。
+        """
+        return None
 
     # ---- 生命周期 ----
 
@@ -140,7 +143,7 @@ class SessionStore(Service):
         """
         await self._drain_pending()
         results = await self.ctx.events.parallel("session/flush", session)
-        return len(results) > 0
+        return any(result for result in results)
 
     def remove(self, session: Session) -> None:
         """让会话离开存储并公告 session/disposed。"""
@@ -160,7 +163,14 @@ class SessionStore(Service):
         if boundary < 0:
             boundary = -1
         prefix = source._events[:boundary + 1]
-        if prefix and prefix[-1].type == "turn/start":
+        # turn 深度平衡：前缀不得结束于开放 turn 内（不止最后一条是 turn/start）
+        depth = 0
+        for event in prefix:
+            if event.type == "turn/start":
+                depth += 1
+            elif event.type == "turn/end":
+                depth = max(0, depth - 1)
+        if depth > 0:
             raise ValueError("fork boundary must not end inside an open turn")
         child = self.create(
             session_id=child_session_id,

@@ -56,8 +56,10 @@ class WanterPlugin(Service):
         engine = ctx.wanter
 
         def position_of(session_id: str) -> tuple:
-            return self._positions.setdefault(
+            position = self._positions.setdefault(
                 session_id, _session_position(session_id, engine.dim))
+            engine.set_position(session_id, position)  # 供 goal_complete 等消费
+            return position
 
         # ③ 动态上下文：模型可见地形状态
         context = PromptContext(
@@ -123,9 +125,11 @@ class WanterPlugin(Service):
                                 + coord[i] * self.coordinator_blend
                                 for i in range(engine.dim))
                 self._positions[agent.id] = blended
+                engine.set_position(agent.id, blended)
                 pos = blended
             report = engine.report_and_maybe_erode(pos)
             self._positions[agent.id] = engine.gradient_step(pos)
+            engine.set_position(agent.id, self._positions[agent.id])
             if report["eroded"]:
                 agent.steer(
                     "【wanter】检测到局部洼地，已降低周边地形开辟新下坡通道。"
@@ -233,13 +237,16 @@ def build_wanter_goal_tools() -> List[Any]:
     async def wanter_goal_complete(args, run_ctx):
         engine = _engine_of(run_ctx)
         agent = run_ctx.execution.agent
-        pos = tuple(0.0 for _ in range(engine.dim))
-        if agent is not None:
-            session_id = agent.id
-            import hashlib as _h
-            digest = _h.sha256(session_id.encode("utf-8")).digest()
-            pos = tuple((digest[i] / 255.0) * 4.0 - 2.0
-                        for i in range(min(engine.dim, len(digest))))
+        # 优先用插件维护的「当前水滴位置」（梯度步/coordinator 已移动后），
+        # 无记录才回退会话哈希初始坐标。
+        pos = engine.get_position(agent.id) if agent is not None else None
+        if pos is None:
+            pos = tuple(0.0 for _ in range(engine.dim))
+            if agent is not None:
+                import hashlib as _h
+                digest = _h.sha256(agent.id.encode("utf-8")).digest()
+                pos = tuple((digest[i] / 255.0) * 4.0 - 2.0
+                            for i in range(min(engine.dim, len(digest))))
         nearest = engine.nearest_goal(pos)
         if nearest is None:
             return "无目标"

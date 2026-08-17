@@ -100,6 +100,10 @@ def apply_workspace_landlock(workspace: str) -> None:
     """
     把当前进程限制为「只读 FS + 工作区可写」（不可逆）。
 
+    Landlock 语义：任何进入 ``handled_access_fs`` 的访问**默认全部拒绝**，
+    除非有规则显式放行。因此必须加两条 path_beneath 规则：
+    根路径放行读/执行（含动态库），工作区放行写掩码。
+
     :raises OSError: 内核不支持或应用失败（调用方降级处理）。
     """
     handled = _READONLY_GLOBAL | _WRITE_MASK
@@ -110,6 +114,19 @@ def apply_workspace_landlock(workspace: str) -> None:
         raise OSError(f"landlock_create_ruleset failed (errno "
                       f"{ctypes.get_errno()})")
     try:
+        # 规则 1：全文件系统只读（含 EXECUTE，进程自身二进制/动态库）
+        root_fd = os.open("/", os.O_PATH | os.O_CLOEXEC)
+        try:
+            read_attr = _LandlockPathBeneathAttr(
+                allowed_access=_READONLY_GLOBAL, parent_fd=root_fd)
+            if _syscall(_SYS_LANDLOCK_ADD_RULE, ruleset_fd,
+                        _LANDLOCK_RULE_PATH_BENEATH,
+                        ctypes.byref(read_attr), 0) < 0:
+                raise OSError(f"landlock_add_rule(readonly) failed (errno "
+                              f"{ctypes.get_errno()})")
+        finally:
+            os.close(root_fd)
+        # 规则 2：工作区可写
         parent_fd = os.open(workspace, os.O_PATH | os.O_CLOEXEC)
         try:
             path_attr = _LandlockPathBeneathAttr(

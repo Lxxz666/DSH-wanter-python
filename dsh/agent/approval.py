@@ -31,7 +31,7 @@ class ApprovalService(Service):
         super().__init__(ctx, config)
         self._channel: Optional[AnswerCallback] = None
         self._pending: List[Dict[str, Any]] = []
-        self._default: bool = bool(config.get("default_allow", False))
+        self._default: bool = bool((config or {}).get("default_allow", False))
 
     def apply(self, ctx) -> None:
         ctx.set("approval", self)

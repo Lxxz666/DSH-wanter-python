@@ -85,8 +85,12 @@ class SurfaceManager:
             self.nodes.append(seq)
         elif isinstance(surface_op, dict) and surface_op.get("op") == "replace":
             start, end = surface_op["start"], surface_op["end"]
+            # 新节点插入「被替换区间所在位置」（start 之前元素之后），
+            # 而不是追加到末尾——压缩最旧前缀时摘要必须仍在剩余消息之前。
+            index = next((i for i, n in enumerate(self.nodes)
+                          if n == start), len(self.nodes))
             kept = [n for n in self.nodes if not (start <= n <= end)]
-            kept.append(seq)
+            kept.insert(index, seq)
             self.nodes = kept
             self.replace_generation += 1
 

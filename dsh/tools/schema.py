@@ -49,6 +49,13 @@ def assert_supported_schema(schema: Any, path: str = "root") -> None:
         assert_supported_schema(schema["items"], f"{path}.items")
     if "required" in schema and "properties" not in schema:
         raise ToolArgsError(f"{path}: 'required' needs 'properties'")
+    # object 结构关键字必须伴随 type:"object"（否则 _matches 会静默忽略整个
+    # 结构、任何值都通过——fail loud 而非假校验）
+    if (("properties" in schema or "additionalProperties" in schema)
+            and schema.get("type") != "object"):
+        raise ToolArgsError(
+            f"{path}: 'properties'/'additionalProperties' require "
+            'type: "object"')
     for key in ("default", "examples"):
         if key in schema and not is_json_value(schema[key]):
             raise ToolArgsError(f"{path}: {key} must be lossless JSON")
