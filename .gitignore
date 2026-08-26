@@ -15,6 +15,11 @@ examples/*.svg
 !examples/wanter_showcase.svg
 !examples/wanter_embedding_chart.svg
 
+# 密钥（绝不提交）
+.env
+.env.*
+!.env.example
+
 # IDE
 .idea/
 .vscode/
@@ -22,3 +27,8 @@ examples/*.svg
 # 系统
 Thumbs.db
 .DS_Store
+
+# 临时验证脚本 / 个人站点安全测试（非框架内容）
+_verify_dedupe.py
+crawler_lxz2yuyu.py
+lxz2yuyu_data/

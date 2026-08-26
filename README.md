@@ -3,7 +3,7 @@
 **DeepSeek Harness 的 Python 重实现** —— 一切皆插件的智能体框架。
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)]()
-[![Tests](https://img.shields.io/badge/tests-224%20passed%20%C2%B7%201%20skipped-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-230%20passed%20%C2%B7%201%20skipped-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 [![Manuals](https://img.shields.io/badge/manuals-21%20%E7%AB%A0-orange)]()
 [![Lines](https://img.shields.io/badge/dsh%20%E5%8C%85-13k%2B%20%E8%A1%8C-blueviolet)]()
@@ -70,13 +70,30 @@ python run.py --dump-config                    # 查看组合后的配置树
 python run.py plugin init myprofile            # 初始化自定义 profile
 ```
 
-**模型密钥**：设置 `DEEPSEEK_API_KEY`（可选 `DEEPSEEK_BASE_URL`）后自动用 DeepSeek 官方 API；
-未设置时回退内置 **mock 适配器**（离线、确定性），开箱即可运行。
+**模型密钥**：支持两种方式（按优先级）：
+
+1. **项目 `.env`**（推荐，密钥不入 git）：仓库根目录建 `.env`，boot 时自动加载：
+   ```sh
+   # 火山方舟 Agent Plan（dpv4flash）
+   DEEPSEEK_API_KEY=ark-xxxxxxxx
+   DEEPSEEK_BASE_URL=https://ark.cn-beijing.volces.com/api/plan/v3
+   DEEPSEEK_MODEL=deepseek-v4-flash
+   DEEPSEEK_DISABLE_THINKING=1     # 推理模型 content 直出的关键开关（见下）
+   ```
+2. **环境变量**：`DEEPSEEK_API_KEY`（必需）、`DEEPSEEK_BASE_URL`（默认官方地址）、
+   `DEEPSEEK_MODEL`（默认 `deepseek-chat`）、`DEEPSEEK_DISABLE_THINKING`（默认关）。
+
+未设置密钥时回退内置 **mock 适配器**（离线、确定性），开箱即可运行。
+
+> ⚠️ **推理模型坑（dpv4flash 等）**：火山方舟的 deepseek-v4-flash 等推理模型在流式响应里
+> `delta.content` 为空、内容全在 `delta.reasoning_content`。设 `DEEPSEEK_DISABLE_THINKING=1`
+> 后适配器注入 `thinking:{"type":"disabled"}`，content 直出、响应更快。更多排错见
+> [openai-compatible-llm-integration](https://github.com/Lxxz666) 相关技能。
 
 **验证**：
 
 ```sh
-python -m pytest tests -q      # 期望 224 passed, 1 skipped（Linux-only）
+python -m pytest tests -q      # 期望 230 passed, 1 skipped（Linux-only）
 ```
 
 ## wanter 一分钟
@@ -133,7 +150,7 @@ dsh_python/
 │   ├── wanter/           # wanter 动力学（引擎/插件/校准/可视化）
 │   ├── config/ boot.py cli/   # 组合与启动
 │   └── server/           # FastAPI Web 服务（REST/SSE/地形面板/会话树）
-├── tests/                # pytest 套件（225 用例 + fixtures；Windows 上 224 passed + 1 skipped）
+├── tests/                # pytest 套件（231 用例 + fixtures；Windows 上 230 passed + 1 skipped）
 ├── examples/             # 示例插件 + wanter 实验/图表（SVG 产出）
 └── manuals/              # 21 章中文开发手册（函数级技术细节）
 ```
@@ -183,10 +200,78 @@ dsh_python/
 数值稳定性 / 投影·工作区·会话引用 —— **无问题**；40 个能力缝全挂载、131 模块
 导入零失败、手册与代码三方对齐。回归：`tests/test_audit_fixes.py`（8 项）。
 
+## 🔍 火山方舟接入与框架优化（2026-08-25）
+
+把 LLM 接缝切到**火山方舟 Agent Plan（deepseek-v4-flash）**，并借真实调用审计出
+一批「只跑 mock 永远发现不了」的框架 bug，全部修复 + 回归测试；Web UI 全面对标
+Hermes 网页端标准重做。
+
+### LLM 接缝（方舟 dpv4flash）
+
+| 改动 | 说明 |
+|---|---|
+| `DEEPSEEK_MODEL` | 适配器默认模型走环境变量（默认 `deepseek-chat` 向后兼容），不再硬编码 |
+| `DEEPSEEK_DISABLE_THINKING` | 注入 `thinking:{"type":"disabled"}`，规避推理模型流式 content 空坑 |
+| `dsh/_env.py` | 无依赖 `.env` loader（boot 最先加载，已有环境变量优先） |
+| `.gitignore` | `.env` / `.env.*` 入黑名单，密钥绝不提交 |
+| `run.py headless` | 真实跑通：普通问答 + **多轮工具调用**（模型调工具 → 执行 → 回复） |
+
+### 框架 bug 修复（方舟真实调用暴露）
+
+| 级别 | 问题 | 修复 |
+|---|---|---|
+| 🔴 严重 | **多轮工具调用 400**：`messages_to_openai` 把 tool-call 塞进 `content:[{"type":"tool_call"}]`，方舟拒绝（只认顶层 `tool_calls`） | 投影到 assistant 消息顶层 `tool_calls` 数组 + 4 个回归测试（`tests/test_llm_messages.py`） |
+| 🔴 严重 | **`loop._default_config` 硬编码 `deepseek-chat`**：自定义端点（方舟）模型名被覆盖 | 尊重适配器 `default_model`（读 `DEEPSEEK_MODEL`） |
+| 🟡 中等 | **schedule 垃圾污染**：storage 里 223 条 `interval=0.2s` 同义任务，每次 boot 每秒向所有 agent 注入 223 条消息淹没会话 | 清理 + `register` 去重 + `interval≥1s` 下限校验 |
+| 🟢 轻微 | **bash 工具 Windows 无 pwsh 崩溃**（本机只有 git-bash） | `_shell_command` 平台回退：pwsh → bash → powershell |
+| 🟢 基建 | **tests 缺 `__init__.py`**：3 failed + 3 errors 全因模块导入失败 | 补齐，全绿 |
+| 🟢 生产 | **storage 不随 workspace 隔离**：测试（tmp_path）污染 `~/.dsh/storage.json`，schedule 垃圾任务再次淹会话 | `build_patches` 传 workspace 时同步隔离 storage + settings 到工作区 |
+| 🟢 生产 | **JobsService 缺 `timeout` 属性崩溃**（模型调后台任务时） | `_run` 改用 `job.timeout` |
+
+### Web UI（沉浸式极光工作台 · 无侧栏）
+
+| 维度 | 标准 |
+|---|---|
+| 布局 | **彻底去侧栏**：全屏沉浸式消息流 + 极简玻璃顶栏；会话切换为**顶部下拉浮层**（不常驻）；输入区为**悬浮玻璃输入坞**（聚焦发光上浮） |
+| 视觉 | **动态极光背景**：电光青/紫罗兰/品红三色光斑慢速漂移 + Raycast 式斜向流动光带 + 工程网格；深空蓝黑底；玻璃拟态（blur+saturate）；渐变 accent 发光按钮 |
+| 交互 | **鼠标光晕跟随**（青蓝径向光晕随 mousemove 移动）、输入坞聚焦光环、卡片 hover 微浮、会话项 hover 位移、发送按钮按压回弹 |
+| 主题 | 默认「极光深空」暗色；「雪白晨曦」浅色；设置可调**极光背景强度**（0-100%） |
+| Markdown | 自研渲染器：标题/列表/表格/引用/代码块+复制/行内码/粗斜体/链接/hr |
+| 思考过程 | reasoning 块 → 「思考过程」折叠面板（默认收起） |
+| 设置 | ⚙ 抽屉：provider/模型/温度/max_tokens/主题/字体/密度/极光强度/AGENTS.md·CLAUDE.md·附加md/压缩阈值/自动标题；`GET`/`PUT /api/settings` 持久化 |
+| 响应式 | ≤820px 自动抽屉侧栏 |
+
+## 🔍 Web 会话持久化与 UI Bug 修复（2026-08-26 验收通过）
+
+用户实测 Web UI 时发现三连 bug：**对话数据存不了 / 没返回结果 / 报错只看见提示框看不到原因**。
+逐层挖出 **6 个连环根因**，全部修复并配回归测试（`tests/test_lazy_resume.py`），
+端到端实测通过后已推送 GitHub。
+
+| # | 根因 | 后果 | 修复 |
+|---|---|---|---|
+| 1 | **Web 服务器模式从不触发持久化 flush**（CLI 有 `flush`，Web 的 driver 没有） | 对话只进内存缓冲、**永不写盘** | turn 结束后 `sessions.flush()` 落盘 |
+| 2 | 恢复的会话 **agent 不 live** | 发消息 POST 404 "agent not live"，消息丢弃 | 启动只恢复 Session 元数据；发消息**懒加载 resume** |
+| 3 | **模型工具循环无步数上限**（`while True`） | turn 永不结束 → 不落盘 + 不返回 | `MAX_TURN_STEPS=25` 强制终止 + 落盘 |
+| 4 | agent driver 用错事件循环 | TestClient/portal 后台线程创建的 driver 被请求级作用域**取消**、跨线程 Event 失效 | driver 锚定**宿主循环**（boot 时记录） |
+| 5 | `request/context` 事件**漏注册事件目录** | 续聊 resume 时 `Session.from_seed` 严格校验拒绝 | 补注册进 `EVENT_CATALOG` |
+| 6 | 前端 `api()` 只抛状态码、不读响应体 error | 报错信息看不到，只见"发送失败"提示框 | `api()` 带出后端 error 详情 |
+
+**关键能力**：会话现在**跨重启持久化** —— 重启后 `/api/sessions` 完整恢复历史会话，
+点开可直接续聊（自动 resume agent），新对话实时落盘 JSONL，刷新不丢。
+
+### 鲸鱼娘页宠 🐳
+
+Web 聊天界面右下角常驻 **DeepSeek 鲸鱼娘** 二次元页宠（手绘 SVG）：
+
+- 蓝发发尾分叉成鲸鱼尾 + 头顶小鲸鱼帽 + 呆毛 + 大眼双高光 + 粉腮红 + 女仆围裙
+- **8 个动画**：悬浮呼吸 / 发尾·帽尾·徽章尾摆动 / 眼睛跟随鼠标 / 泡泡上浮
+- **点击冒台词** + **AI 思考/兴奋状态联动**（右上角状态灯同源）
+- 两轮视觉验收打磨（补鲸鱼尾 / 修嘴 / 修腮红 / 调围裙色）
+
 ## 测试
 
 ```sh
-python -m pytest tests -q   # 224 passed, 1 skipped（Linux-only Landlock 用例）
+python -m pytest tests -q   # 230 passed, 1 skipped（Linux-only Landlock 用例）
 ```
 
 ## 许可证
