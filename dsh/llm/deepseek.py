@@ -89,6 +89,11 @@ class DeepSeekAdapter(LlmAdapter):
         payload["messages"].extend(messages_to_openai(request.messages))
         if request.tools:
             payload["tools"] = request.tool_schemas()
+            # 红蓝队增强：可选强制工具调用（tool_choice）经 config.extra 传入
+            # （如 redteam 强制 tool_choice=required），默认 None 不设置。
+            tc = (request.config.extra or {}).get("tool_choice")
+            if tc:
+                payload["tool_choice"] = tc
         if request.config.max_tokens:
             payload["max_tokens"] = request.config.max_tokens
         if request.config.temperature is not None:
