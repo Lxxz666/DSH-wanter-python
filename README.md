@@ -3,7 +3,7 @@
 **DeepSeek Harness 的 Python 重实现** —— 一切皆插件的智能体框架。
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)]()
-[![Tests](https://img.shields.io/badge/tests-230%20passed%20%C2%B7%201%20skipped-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-237%20passed%20%C2%B7%201%20skipped-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 [![Manuals](https://img.shields.io/badge/manuals-21%20%E7%AB%A0-orange)]()
 [![Lines](https://img.shields.io/badge/dsh%20%E5%8C%85-13k%2B%20%E8%A1%8C-blueviolet)]()
@@ -35,6 +35,7 @@ MCP/Code Mode/自指 cordis/会话投影/工作区，以及 FastAPI + 原生 JS 
 | hooks 兼容桥 | 直接读 Claude Code `settings.json` / Codex `config.toml`（matcher/stdin JSON/$VAR 替换） |
 | wanter | 势能地形 + 水迹蒸发 + 定向侵蚀：物理启发的经验层，量化指标见 WANTER.md |
 | 会话投影/工作区/引用 | sessionProjections（框架驱动）+ workspaceRegistry + 跨会话有界快照 |
+| Reflexion | 失败反思服务（论文2303.11366）：turn失败→LLM生成第一人称教训→写长时记忆→pre-step 检索注入闭环，`REFLECTION_ENABLED` 门控（强模型） |
 
 ## 架构
 
@@ -48,6 +49,7 @@ graph TD
     L --> A[Agent Loop: turn/step 状态机]
     A --> S
     A --> T
+    A -.turn error.-> Refl[Reflexion: 失败反思/记忆注入]
     K --> Sub[subagent/goal/compaction/workflow/cordis/MCP]
     K --> Wanter[wanter: 势能地形/侵蚀]
     A -.tools/result & turn-stopping.-> Wanter
